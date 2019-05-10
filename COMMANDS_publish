@@ -1,4 +1,4 @@
-docker tag image-default pkerpedjiev/higlass-develop
-docker push pkerpedjiev/higlass-develop
-docker tag image-default pkerpedjiev/higlass-develop:latest
-docker push pkerpedjiev/higlass-develop:latest
+docker tag image-default msauria/higlass-ie
+docker push msauria/higlass-ie
+docker tag image-default msauria/higlass-ie:latest
+docker push msauria/higlass-ie:latest
