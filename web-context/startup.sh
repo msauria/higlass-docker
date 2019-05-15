@@ -3,9 +3,8 @@
 mkdir -p /data/media
 mkdir -p /data/log
 
-# Create customized config file with correct trackServer in viewconfig
-python ./setup_viewconf.py 2> /data/log/ie.log
-cp ./default-viewconf-fixture.xml higlass-server/default-viewconf-fixture.xml
+# Ensure that until data is digested and config.js is created, server returns 502
+mv higlass-app/index.html higlass-app/temp_index.html
 
 # Add function to clear sessionStorage (and the viewConfig) on leaving HiGlass
 echo "" >> higlass-app/hglib.min.js
@@ -14,6 +13,6 @@ echo "  sessionStorage.clear();" >> higlass-app/hglib.min.js
 echo "};" >> higlass-app/hglib.min.js
 
 # Digest tracks into database
-python ./startup.py 2>> /data/log/ie.log &
+python ./startup.py 2> /data/log/ie.log &
 
 supervisord -n

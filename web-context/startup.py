@@ -5,6 +5,7 @@ from string import Template
 import subprocess
 import logging
 import time
+import copy
 
 #import galaxy_ie_helpers
 from bioblend.galaxy import objects
@@ -110,6 +111,7 @@ def load_data():
     #    galaxy_ie_helpers.get(int(hid))
     #    shutil.copy('/import/%s' % hid, '/import/ipython_galaxy_notebook.ipynb')
 
+    datasets = []
     additional_ids = os.environ.get("ADDITIONAL_IDS", "")
     if additional_ids:
         gi = get_galaxy_connection(history_id=history_id, obj=False)
@@ -127,6 +129,7 @@ def load_data():
                     if hda["extension"] == "mcool":
                         filetype = 'cooler'
                         datatype = 'matrix'
+                        tracktype = 'heatmap'
                     else:
                         log.debug("Invalid datatype. Skipping %s" % fname0.split('/')[-1])
                         continue
@@ -136,8 +139,101 @@ def load_data():
                                       "--filename", fname1, "--no-upload", "--coordSystem",
                                       metadata["genome_build"]])
                     log.debug("Loading %s" % fname1)
+                    datasets.append({
+                        'name': metadata['name'],
+                        'uid': name,
+                        'filetype': filetype,
+                        'datatype': datatype,
+                        'tracktype': tracktype,
+                        'genome': metadata["genome_build"],
+                        })
                 except:
                     log.debug("Failed to load %s" % fname1)
+    return datasets
+
+def create_default_viewconf(datasets):
+    if "PROXY_URL" in os.environ:
+        PROXY_URL = "http://%s" % os.environ['PROXY_URL'].split('http://')[-1]
+    else:
+        PROXY_URL = ""
+    viewconf = {"editable": True,
+            "zoomFixed": False,
+            "trackSourceServers": [
+                "%s/api/v1" % PROXY_URL,
+                "http://higlass.io/api/v1"
+                ],
+            "exportViewUrl": "/api/v1/viewconfs/",
+            "views": [{
+                "tracks": {
+                    "top": [],
+                    "left": [],
+                    "center": [],
+                    "right": [],
+                    "bottom": []
+                    },
+                "initialXDomain": [ 0, 3200000000 ],
+                "initialYDomain": [ 0, 3200000000 ],
+                "layout": {
+                    "w": 12,
+                    "h": 12,
+                    "x": 0,
+                    "y": 0,
+                    "moved": False,
+                    "static": False
+                    }
+                }],
+            "zoomLocks": {
+                "locksByViewUid": {},
+                "locksDict": {}
+                },
+            "locationLocks": {
+                "locksByViewUid": {},
+                "locksDict": {}
+                }
+            }
+    track = {
+        'uid': '',
+        'type': '',
+        'position': '',
+        'contents': []
+        }
+    tile = {
+        'name': "",
+        'server': "%s/api/v1" % PROXY_URL,
+        'tilesetUid': "",
+        'type': "",
+        'maxZoom': None,
+        'width': 100,
+        'height': 100,
+        'transforms': [],
+        'position': ''
+        }
+    for dset in datasets:
+        if dset['datatype'] == 'matrix':
+            if len(viewconf['views'][0]['tracks']['center']) == 0:
+                ctrack = copy.deepcopy(track)
+                ctrack['uid'] = 'center'
+                ctrack['type'] = 'combined'
+                ctrack['position'] = 'center'
+                viewconf['views'][0]['tracks']['center'].append(ctrack)
+            ctile = copy.deepcopy(tile)
+            ctile['name'] = dset['name']
+            ctile['tilesetUid'] = dset['uid']
+            ctile['type'] = dset['tracktype']
+            ctile['position'] = 'center'
+            viewconf['views'][0]['tracks']['center'][0]['contents'].append(ctile)
+
+    viewconf = str(viewconf).replace('False', 'false').replace('True', 'true').replace('None', 'null')
+    viewconf = Template(viewconf).safe_substitute({"PROXY_URL": PROXY_URL})
+    output = open('default-viewconf-fixture.xml', 'w')
+    output.write(viewconf)
+    output.close()
+
+    output = open('higlass-app/config.js', 'w')
+    output.write('window.HGAC_HOMEPAGE_DEMOS=false;\n')
+    output.write('window.HGAC_SERVER="";\n')
+    output.write('window.HGAC_DEFAULT_VIEW_CONFIG=%s;' % viewconf)
+    output.close()
 
 
 if __name__ == "__main__":
@@ -149,4 +245,23 @@ if __name__ == "__main__":
         log.debug("Database exists")
     else:
         log.debug("Database does not exist")
-    load_data()
+
+    datasets = load_data()
+    create_default_viewconf(datasets)
+
+    # Update nginx configuration and restart
+    subprocess.Popen(["mv", "/etc/nginx/sites-enabled/hgserver_nginx_final.conf",
+                      "/etc/nginx/sites-enabled/hgserver_nginx.conf"]).wait()
+
+    # Make sure page doesn't cache and make index.html available again
+    index = open('higlass-app/temp_index.html').read()
+    nocache = "<meta http-equiv='cache-control' content='no-cache'>" +\
+              "<meta http-equiv='expires' content='0'>" +\
+              "<meta http-equiv='pragma' content='no-cache'>"
+    index.replace('<head>', "<head>%s" % nocache)
+    output = open("higlass-app/index.html", 'w')
+    output.write(index)
+    output.close()
+
+    # Reload nginx with new config
+    subprocess.Popen(["service", "nginx", "reload"])
