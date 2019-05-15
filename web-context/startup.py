@@ -120,7 +120,7 @@ def load_data():
             if hda["id"] in additional_ids:
                 metadata = gi.datasets.show_dataset(hda['id'])
                 fname0 = "/import/[%i] %s.%s" % (metadata['hid'], metadata['name'], metadata['extension'])
-                fname1 = "/data/media/%i_%s" % (metadata['hid'], metadata['name'])
+                fname1 = "/data/media/%i %s" % (metadata['hid'], metadata['name'])
                 name = "%i_%s" % (metadata['hid'], metadata['name'].replace(' ', '_').replace('.', '_'))
                 #galaxy_ie_helpers.get(int(hda["hid"]))
                 try:
