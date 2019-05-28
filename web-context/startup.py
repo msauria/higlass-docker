@@ -112,6 +112,7 @@ def load_data():
     #    shutil.copy('/import/%s' % hid, '/import/ipython_galaxy_notebook.ipynb')
 
     datasets = []
+    genomes = []
     additional_ids = os.environ.get("ADDITIONAL_IDS", "")
     if additional_ids:
         gi = get_galaxy_connection(history_id=history_id, obj=False)
@@ -122,34 +123,70 @@ def load_data():
             if hda["id"] in additional_ids:
                 metadata = gi.datasets.show_dataset(hda['id'])
                 fname0 = "/import/[%i] %s.%s" % (metadata['hid'], metadata['name'], metadata['extension'])
-                fname1 = "/data/media/%i %s" % (metadata['hid'], metadata['name'])
-                name = "%i_%s" % (metadata['hid'], metadata['name'].replace(' ', '_').replace('.', '_'))
+                name = "%i_%s" % (metadata['hid'], metadata['name'].replace(' ', '_').replace('.', '_').replace('/', '_'))
+                fname1 = "/data/media/%s" % (name)
                 #galaxy_ie_helpers.get(int(hda["hid"]))
                 try:
                     if hda["extension"] == "mcool":
                         filetype = 'cooler'
                         datatype = 'matrix'
                         tracktype = 'heatmap'
+                    elif hda["extension"] == "bigwig":
+                        filetype = 'bigwig'
+                        datatype = 'vector'
+                        tracktype = 'horizontal-bar'
+                    elif hda['extension'] == "beddb.sqlite":
+                        filetype = 'beddb'
+                        datatype = 'bedlike'
+                        tracktype = 'bedlike'
                     else:
                         log.debug("Invalid datatype. Skipping %s" % fname0.split('/')[-1])
                         continue
                     subprocess.Popen(['ln', '-s', fname0, fname1])
-                    subprocess.Popen(["python", "/home/higlass/projects/higlass-server/manage.py", "ingest_tileset",
-                                      "--filetype", filetype, "--datatype", datatype, "--uid", name,
-                                      "--filename", fname1, "--no-upload", "--coordSystem",
-                                      metadata["genome_build"]])
-                    log.debug("Loading %s" % fname1)
                     datasets.append({
                         'name': metadata['name'],
                         'uid': name,
+                        'fname': fname1,
                         'filetype': filetype,
                         'datatype': datatype,
                         'tracktype': tracktype,
                         'genome': metadata["genome_build"],
                         })
+                    if filetype == "bigwig":
+                        genomes.append(metadata['genome_build'])
                 except:
-                    log.debug("Failed to load %s" % fname1)
+                    log.debug("Failed to link %s" % fname0)
+    genomes = set(genomes)
+    fetch_genomes(genomes)
+    for dset in datasets:
+        try:
+            if dset["filetype"] == "bigwig":
+                genome = dset['genome']
+                if os.path.exists("/data/media/%s.chrom.sizes" % genome):
+                    subprocess.Popen(["python", "/home/higlass/projects/higlass-server/manage.py",
+                                      "ingest_tileset", "--filename", "/data/media/%s.chrom.sizes" % genome,
+                                      "--filetype", "chromsizes-tsv", "--datatype", "chromsizes",
+                                      "--coordSystem", genome])
+                else:
+                    log.debug("Missing chromosome sizes for %s" % dset['fname'])
+                    continue
+            subprocess.Popen(["python", "/home/higlass/projects/higlass-server/manage.py", "ingest_tileset",
+                              "--filetype", dset['filetype'], "--datatype", dset['datatype'],
+                              "--uid", dset['uid'], "--filename", dset['fname'], "--no-upload",
+                              "--coordSystem", dset['genome']])
+            log.debug("Loading %s" % dset['fname'])
+        except:
+            log.debug("Failed to load %s" % dset['fname'])
     return datasets
+
+def fetch_genomes(genomes):
+    for genome in genomes:
+        try:
+            subprocess.Popen([
+                "wget", "http://hgdownload.soe.ucsc.edu/goldenPath/%s/bigZips/%s.chrom.sizes" % (genome, genome),
+                "-O", "/data/media/%s.chrom.sizes" % genome]).wait()
+        except:
+            log.debug("Failed to retrieve chromosome sizes for %s" % genome)
 
 def create_default_viewconf(datasets):
     if "PROXY_URL" in os.environ:
@@ -222,6 +259,32 @@ def create_default_viewconf(datasets):
             ctile['type'] = dset['tracktype']
             ctile['position'] = 'center'
             viewconf['views'][0]['tracks']['center'][0]['contents'].append(ctile)
+        elif dset['datatype'] == 'vector':
+            ctile = copy.deepcopy(tile)
+            ctile['name'] = dset['name']
+            ctile['tilesetUid'] = dset['uid']
+            ctile['type'] = dset['tracktype'].replace('horizontal', 'vertical')
+            ctile['position'] = 'left'
+            viewconf['views'][0]['tracks']['left'].append(ctile)
+            ctile = copy.deepcopy(tile)
+            ctile['name'] = dset['name']
+            ctile['tilesetUid'] = dset['uid']
+            ctile['type'] = dset['tracktype']
+            ctile['position'] = 'top'
+            viewconf['views'][0]['tracks']['top'].append(ctile)
+        elif dset['datatype'] == 'bedlike':
+            ctile = copy.deepcopy(tile)
+            ctile['name'] = dset['name']
+            ctile['tilesetUid'] = dset['uid']
+            ctile['type'] = "vertical-%s" % dset['tracktype']
+            ctile['position'] = 'left'
+            viewconf['views'][0]['tracks']['left'].append(ctile)
+            ctile = copy.deepcopy(tile)
+            ctile['name'] = dset['name']
+            ctile['tilesetUid'] = dset['uid']
+            ctile['type'] = dset['tracktype']
+            ctile['position'] = 'top'
+            viewconf['views'][0]['tracks']['top'].append(ctile)
 
     viewconf = str(viewconf).replace('False', 'false').replace('True', 'true').replace('None', 'null')
     viewconf = Template(viewconf).safe_substitute({"PROXY_URL": PROXY_URL})
